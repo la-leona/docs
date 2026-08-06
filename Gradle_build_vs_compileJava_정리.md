@@ -37,6 +37,42 @@
 - 로그가 실제 찍히는지 -> 앱 실행 (컴파일로는 불가)
 - 커밋 준비 -> `build`
 
+## 2-1. ⚠️ 정적 리소스(js/css)·SQL 매퍼는 `compileJava` 로 반영되지 않는다
+
+**`compileJava` 는 `.java` 만 처리한다.** `src/main/resources` 아래(정적 js/css, SQL 매퍼 xml, yml)는 **`processResources`** 가 별도로 `build/resources/main` 으로 복사한다. 서버는 **classpath = `build/resources/main`** 을 읽으므로, `src` 만 고치면 **서버는 옛 파일을 계속 서빙**한다.
+
+```
+src/main/resources/static/js/...      ← 편집하는 곳
+        ↓  processResources
+build/resources/main/static/js/...    ← 서버가 실제 서빙하는 곳
+```
+
+| 고친 것 | 필요한 task | 재기동 |
+|--|--|--|
+| `src/main/java/**.java` | `compileJava` | 필요 |
+| **`src/main/resources/static/**.js`, `.css`** | **`processResources`** | 보통 불필요(정적 파일) |
+| **`src/main/resources/sqlmap/**.xml`** (MyBatis) | **`processResources`** | 필요 |
+| `src/main/resources/*.yml` | `processResources` | 필요 |
+| `src/main/webapp/**.jsp` | 없음(웹앱 경로) | 보통 자동 반영 |
+
+```powershell
+.\gradlew.bat :user-web-service:processResources --console=plain
+```
+
+### 증상으로 알아채기
+- 파일을 고쳤는데 **브라우저에서 옛 내용**이 보인다 → 캐시로 오해하기 쉽다
+- **시크릿모드·하드리로드(Ctrl+Shift+R)에서도 옛 내용**이면 캐시가 아니라 **이 문제**다
+- 확인법: 서빙 URL 을 직접 열어본다 → `http://localhost:8030/userweb/js/terms/TermsListV4.js`
+- 또는 두 파일을 비교한다
+  ```powershell
+  Select-String -Path 'user-web-service\src\main\resources\static\js\terms\TermsListV4.js'   -Pattern '찾는코드'
+  Select-String -Path 'user-web-service\build\resources\main\static\js\terms\TermsListV4.js' -Pattern '찾는코드'
+  ```
+  → build 쪽에 없으면 `processResources` 미실행
+
+> 실제 사례(2026-08-05): 약관 화면 JS 를 고쳤는데 반영되지 않아 캐시로 의심했으나, `build/resources/main` 에 옛 파일(16:07)이 남아 있던 것이었다. `processResources` 후 즉시 해결.
+> 덧붙여 **어느 파일이 실제로 로드되는지도 확인해야 한다** — 같은 화면에 `TermsList.js`/`TermsListV4.js` 처럼 버전이 여럿이면 컨트롤러가 반환하는 뷰(`setViewName`)를 따라가 확인할 것. Network 탭에 파일이 아예 안 잡히면 그 파일은 로드되지 않는 것이다.
+
 ## 3. compileJava 전에 clean 하는 게 좋을까? -> 대부분 아니오
 
 - Gradle 은 **증분 컴파일**을 함. 바뀐 파일 + 영향 범위만 재컴파일 -> 로그 한 줄 수정이면 거의 즉시.
